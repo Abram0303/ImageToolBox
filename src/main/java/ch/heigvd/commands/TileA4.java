@@ -10,11 +10,24 @@ import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Callable;
+
+import javax.imageio.ImageIO;
+
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
+
 
 @CommandLine.Command(
         name = "tileA4",
-        description = "Tile a logo (circular or rectangular) across an A4 page for printing."
+        description = "Tile logos across an A4 page for printing. Supports multiple logos, one per row."
 )
 public class TileA4 implements Callable<Integer> {
 
@@ -81,7 +94,7 @@ public class TileA4 implements Callable<Integer> {
      */
     @CommandLine.Option(
             names = {"--src-circle"},
-            description = "Crop a circular region from the source before tiling (format: cx,cy,r; values in px or % of min dimension)."
+            description = "Crop a circular region from each source before tiling (format: cx,cy,r; values in px or % of min dimension)."
     )
     public String srcCircleSpec;
 
@@ -95,15 +108,23 @@ public class TileA4 implements Callable<Integer> {
 
     @CommandLine.Option(
             names = {"--mirror-horizontal"},
-            description = "Mirror the source image horizontally (left-right) before tiling."
+            description = "Mirror the source images horizontally (left-right) before tiling."
     )
     public boolean mirrorHorizontal;
 
     @CommandLine.Option(
             names = {"--mirror-vertical"},
-            description = "Mirror the source image vertically (top-bottom) before tiling."
+            description = "Mirror the source images vertically (top-bottom) before tiling."
     )
     public boolean mirrorVertical;
+
+    // ---- NEW: plusieurs fichiers d'entrée (un logo par ligne) ----
+    @CommandLine.Option(
+            names = {"-I", "--inputs"},
+            description = "List of input logo files (one per row, up to 7).",
+            split = ","
+    )
+    public List<File> inputFiles = new ArrayList<>();
 
     @CommandLine.ParentCommand
     protected ImageProcessor parent;
@@ -165,34 +186,66 @@ public class TileA4 implements Callable<Integer> {
         return out;
     }
 
+    // NEW: préparation d'une source (crop + miroir) identique à ce que tu faisais avant
+    private BufferedImage prepareSource(BufferedImage src0) {
+        BufferedImage src = src0;
+
+        if (srcCircleSpec != null && !srcCircleSpec.isBlank()) {
+            String[] parts = srcCircleSpec.split(",");
+            if (parts.length != 3) {
+                throw new IllegalArgumentException("Bad --src-circle format. Expected: cx,cy,r");
+            }
+            int minDim = Math.min(src0.getWidth(), src0.getHeight());
+            int cx = parseComponent(parts[0], minDim);
+            int cy = parseComponent(parts[1], minDim);
+            int r  = parseComponent(parts[2], minDim);
+            src = cropCircleToSquare(src0, cx, cy, r);
+        }
+
+        src = mirrorImage(src, mirrorHorizontal, mirrorVertical);
+        return src;
+    }
+
     @Override
     public Integer call() {
         try {
             Images.io = parent.io;
 
-            BufferedImage src0 = Images.readImage();
-            if (src0 == null) {
-                throw new IllegalStateException("Input image is null (check -i/--input).");
-            }
+            // --- 1) Chargement des sources ---
 
-            // 1) éventuel recadrage circulaire dans la source (option avancée)
-            BufferedImage src = src0;
-            if (srcCircleSpec != null && !srcCircleSpec.isBlank()) {
-                String[] parts = srcCircleSpec.split(",");
-                if (parts.length != 3) {
-                    throw new IllegalArgumentException("Bad --src-circle format. Expected: cx,cy,r");
+            List<BufferedImage> sources = new ArrayList<>();
+
+            if (!inputFiles.isEmpty()) {
+                // On utilise la liste --inputs
+                for (File f : inputFiles) {
+                    BufferedImage img = ImageIO.read(f);
+                    if (img == null) {
+                        throw new IllegalStateException("Cannot read image: " + f);
+                    }
+                    sources.add(prepareSource(img));
                 }
-                int minDim = Math.min(src0.getWidth(), src0.getHeight());
-                int cx = parseComponent(parts[0], minDim);
-                int cy = parseComponent(parts[1], minDim);
-                int r  = parseComponent(parts[2], minDim);
-                src = cropCircleToSquare(src0, cx, cy, r);
+            } else {
+                // Fallback : comportement ancien, une seule image via -i/--input
+                BufferedImage src0 = Images.readImage();
+                if (src0 == null) {
+                    throw new IllegalStateException("Input image is null (check -i/--input or --inputs).");
+                }
+                sources.add(prepareSource(src0));
             }
 
-            // 2) éventuel miroir de la source
-            src = mirrorImage(src, mirrorHorizontal, mirrorVertical);
+            if (sources.isEmpty()) {
+                throw new IllegalStateException("No input images provided.");
+            }
 
-            // 3) création de la page A4
+            // On limite à 7 lignes (7 logos)
+            if (sources.size() > 7) {
+                System.out.println("Warning: more than 7 input images, only the first 7 will be used.");
+                sources = sources.subList(0, 7);
+            }
+
+            int nbLogos = sources.size();
+
+            // --- 2) création de la page A4 ---
             int pageW = mmToPx(A4_W_MM, dpi);
             int pageH = mmToPx(A4_H_MM, dpi);
 
@@ -229,8 +282,16 @@ public class TileA4 implements Callable<Integer> {
                 int stepX = tileW + gapPx;
                 int stepY = tileH + gapPx;
 
+                // --- 3) Grille : plusieurs colonnes, 7 lignes max ---
                 int cols = Math.max(1, (usableW + gapPx) / stepX);
-                int rows = Math.max(1, (usableH + gapPx) / stepY);
+                int rows = Math.min(7, nbLogos); // une ligne par logo, max 7
+
+                // Si jamais 7 lignes ne tiennent pas, on réduit (sécurité)
+                int maxRowsThatFit = Math.max(1, (usableH + gapPx) / stepY);
+                if (rows > maxRowsThatFit) {
+                    System.out.printf("Warning: only %d rows fit vertically (requested %d).%n", maxRowsThatFit, rows);
+                    rows = maxRowsThatFit;
+                }
 
                 int totalW = cols * tileW + (cols - 1) * gapPx;
                 int totalH = rows * tileH + (rows - 1) * gapPx;
@@ -240,17 +301,17 @@ public class TileA4 implements Callable<Integer> {
 
                 Shape oldClip = g.getClip();
 
-                // 4) dessin de la grille de logos
+                // --- 4) dessin : une ligne = un logo différent ---
                 for (int row = 0; row < rows; row++) {
+                    BufferedImage src = sources.get(row); // logo de cette ligne
+
                     for (int col = 0; col < cols; col++) {
                         int x = startX + col * (tileW + gapPx);
                         int y = startY + row * (tileH + gapPx);
 
                         if (rect) {
-                            // clip rectangulaire
                             g.setClip(x, y, tileW, tileH);
                         } else {
-                            // clip circulaire, sauf si --no-mask
                             if (!noMask) {
                                 Shape circle = new Ellipse2D.Double(x, y, tileW, tileH);
                                 g.setClip(circle);
@@ -259,16 +320,13 @@ public class TileA4 implements Callable<Integer> {
                             }
                         }
 
-                        // Calcul de l’échelle
                         double scale;
                         if (rect) {
-                            // On fait tenir l’image dans le rectangle
                             scale = Math.min(
                                     (double) tileW / src.getWidth(),
                                     (double) tileH / src.getHeight()
                             );
                         } else {
-                            // Mode cercle : on remplit le cercle (avec éventuel rognage)
                             scale = (double) tileW / Math.min(src.getWidth(), src.getHeight());
                         }
 
@@ -279,7 +337,6 @@ public class TileA4 implements Callable<Integer> {
                         int dy = y + (tileH - drawH) / 2;
 
                         g.drawImage(src, dx, dy, drawW, drawH, null);
-
                         g.setClip(oldClip);
                     }
                 }
@@ -299,18 +356,63 @@ public class TileA4 implements Callable<Integer> {
                     g.drawLine(pageW - marginPx, cy, pageW - marginPx + markerLen, cy);
                 }
 
-                System.out.printf("Grid: %d cols x %d rows = %d logos%n", cols, rows, cols * rows);
+                System.out.printf("Grid: %d cols x %d rows = %d tiles (with %d distinct logos)%n",
+                        cols, rows, cols * rows, rows);
             } finally {
                 g.dispose();
             }
 
-            Images.writeImage(page);
-            System.out.println("A4 sheet generated. Print at 100% scale.");
+            File output = parent.io.outputFile;
+            String outName = output.getName().toLowerCase();
+
+            if (outName.endsWith(".pdf")) {
+                // Nouveau comportement : vrai PDF A4
+                writePdfA4(page, output);
+                System.out.println("A4 PDF generated. Print at 100% scale.");
+            } else {
+                // Ancien comportement : image PNG/JPG, etc.
+                Images.writeImage(page);
+                System.out.println("Image generated. Print at 100% scale.");
+            }
+
             return 0;
 
         } catch (Exception e) {
             System.err.println("[tileA4] " + e.getMessage());
+            e.printStackTrace();
             return 1;
         }
     }
+
+    private void writePdfA4(BufferedImage pageImage, File outputFile) throws Exception {
+        try (PDDocument doc = new PDDocument()) {
+            // Page A4
+            PDPage pdfPage = new PDPage(PDRectangle.A4);
+            doc.addPage(pdfPage);
+
+            // Convertit notre BufferedImage en image PDFBox
+            PDImageXObject pdImage = LosslessFactory.createFromImage(doc, pageImage);
+
+            try (PDPageContentStream cs = new PDPageContentStream(doc, pdfPage)) {
+                float pageW = pdfPage.getMediaBox().getWidth();
+                float pageH = pdfPage.getMediaBox().getHeight();
+
+                float imgW = pdImage.getWidth();
+                float imgH = pdImage.getHeight();
+
+                // On adapte l’image pour qu’elle tienne dans la page
+                float scale = Math.min(pageW / imgW, pageH / imgH);
+                float drawW = imgW * scale;
+                float drawH = imgH * scale;
+
+                float x = (pageW - drawW) / 2f;
+                float y = (pageH - drawH) / 2f;
+
+                cs.drawImage(pdImage, x, y, drawW, drawH);
+            }
+
+            doc.save(outputFile);
+        }
+    }
+
 }
