@@ -1,8 +1,6 @@
 package ch.heigvd;
 
-import ch.heigvd.commands.Grayscale;
-import ch.heigvd.commands.Invert;
-import ch.heigvd.commands.Rotate;
+import ch.heigvd.commands.*;
 
 import picocli.CommandLine;
 
@@ -13,7 +11,9 @@ import picocli.CommandLine;
         subcommands = {
                 Grayscale.class,
                 Invert.class,
-                Rotate.class
+                Rotate.class,
+                Mirror.class,
+                TileA4.class
         },
         scope = CommandLine.ScopeType.INHERIT,
         mixinStandardHelpOptions = true
