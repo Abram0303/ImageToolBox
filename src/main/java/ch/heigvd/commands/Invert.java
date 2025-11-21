@@ -1,6 +1,6 @@
 package ch.heigvd.commands;
 
-import ch.heigvd.ImageProcessor;
+import ch.heigvd.ImageToolBox;
 import ch.heigvd.util.Images;
 import picocli.CommandLine;
 
@@ -17,7 +17,7 @@ import java.util.concurrent.Callable;
 public class Invert implements Callable<Integer> {
 
     @CommandLine.ParentCommand
-    protected ImageProcessor parent;
+    protected ImageToolBox parent;
 
     @Override
     public Integer call() {
