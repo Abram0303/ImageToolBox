@@ -14,9 +14,6 @@
 *.iml
 *.ipr
 
-# Local tests
-src/main/java/ch/heigvd/TestImages.java
-
 # Maven shade
 dependency-reduced-pom.xml
 

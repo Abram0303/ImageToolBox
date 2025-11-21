@@ -19,14 +19,14 @@ import picocli.CommandLine;
         mixinStandardHelpOptions = true
 )
 
-public class ImageProcessor {
+public class ImageToolBox {
 
     @CommandLine.Mixin
     public IOOptions io;
 
     public static void main(String[] args)
     {
-        int exitCode = new CommandLine(new ImageProcessor()).execute(args);
+        int exitCode = new CommandLine(new ImageToolBox()).execute(args);
         System.exit(exitCode);
     }
 }

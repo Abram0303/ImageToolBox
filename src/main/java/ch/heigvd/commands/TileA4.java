@@ -1,6 +1,6 @@
 package ch.heigvd.commands;
 
-import ch.heigvd.ImageProcessor;
+import ch.heigvd.ImageToolBox;
 import ch.heigvd.util.Images;
 import picocli.CommandLine;
 
@@ -129,7 +129,7 @@ public class TileA4 implements Callable<Integer> {
     public List<File> inputFiles = new ArrayList<>();
 
     @CommandLine.ParentCommand
-    protected ImageProcessor parent;
+    protected ImageToolBox parent;
 
     // A4 in mm
     private static final double A4_W_MM = 210.0;

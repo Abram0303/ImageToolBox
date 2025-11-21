@@ -1,6 +1,6 @@
 package ch.heigvd.commands;
 
-import ch.heigvd.ImageProcessor;
+import ch.heigvd.ImageToolBox;
 import ch.heigvd.util.Images;
 import picocli.CommandLine;
 
@@ -28,7 +28,7 @@ public class Mirror implements Callable<Integer> {
     public boolean vertical;
 
     @CommandLine.ParentCommand
-    protected ImageProcessor parent;
+    protected ImageToolBox parent;
 
     @Override
     public Integer call() {

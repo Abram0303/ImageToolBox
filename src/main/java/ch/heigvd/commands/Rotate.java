@@ -1,6 +1,6 @@
 package ch.heigvd.commands;
 
-import ch.heigvd.ImageProcessor;
+import ch.heigvd.ImageToolBox;
 import ch.heigvd.util.Images;
 import picocli.CommandLine;
 
@@ -25,7 +25,7 @@ public class Rotate implements Callable<Integer> {
     public int angle;
 
     @CommandLine.ParentCommand
-    protected ImageProcessor parent;
+    protected ImageToolBox parent;
 
     public Integer call(){
         try {

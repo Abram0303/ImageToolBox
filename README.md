@@ -1,142 +1,184 @@
-## DAI 2025–2026 - Class C - Practical Work 1
+# ImageToolBox 
 
 ---
 
 ## Table of Contents
-- [Authors](#authors)
-- [Project Overview](#project-overview)
-- [Implemented Commands](#implemented-commands)
-- [Build Instructions](#build-instructions)
-- [Usage Examples](#usage-instructions)
-- [Example Results](#example-results)
-- [Use of AI Tools](#use-of-ai-tools-and-external-sources)
+
+* [Authors](#authors)
+* [Project Overview](#project-overview)
+* [Implemented Commands](#implemented-commands)
+* [Build Instructions](#build-instructions)
+* [Usage Instructions](#usage-instructions)
+
+    * [From the Terminal](#from-the-terminal)
+    * [From IntelliJ IDEA](#from-intellij-idea)
+* [A4 Logo Tiling Feature](#a4-logo-tiling-feature)
+* [Use of AI Tools](#use-of-ai-tools)
 
 ---
 
-### Authors
-- **Romain Durussel**
-- **Abram Zweifel**
+## Authors
+
+* **Romain Durussel**
+* **Abram Zweifel**
 
 HEIG-VD, Class C, 2025–2026
 
 ---
 
-### Project Overview
+## Project Overview
 
-In this project, we developed a command-line tool to perform various image processing operations.
-The tool allows users to easily apply transformations to RGB images directly from the terminal.
+**ImageToolBox** is a Java-based command-line toolkit for basic image processing operations.
 
-The purpose of this tool is to make basic image transformations accessible directly from the 
-command line without needing complex image editing software. It supports multiple formats and 
-demonstrates practical use of Java I/O and image processing libraries.
+The tool allows users to apply transformations to RGB images directly from the terminal without requiring specialized image-editing applications.
+It demonstrates:
 
----
-
-### Implemented Commands
-
-1. ```grayscale```: converts an RGB color image to grayscale. 
-
-
-2. ```invert``` program : inverts the colors of an RGB image.
-
-
-3. ```rotate``` program : rotates the image by 90°, 180°, or 270° (clockwise).
+* Image manipulation via `BufferedImage`, `Raster`, `WritableRaster`
+* Efficient stream-based file I/O
+* Modular CLI using **Picocli**
+* Packaging with **Maven**
+* Automatic generation of **native A4 PDF sheets**
 
 ---
 
-### Build Instructions
+## Implemented Commands
 
-Follow these commands to clone and build the project locally:
+### `grayscale`
 
-1. Clone the repository from GitHub :
+Converts a color image to grayscale.
+
+### `invert`
+
+Inverts all color channels.
+
+### `rotate`
+
+Rotates an image by 90°, 180°, or 270°.
+
+### `mirror`
+
+Applies horizontal and/or vertical mirroring.
+
+### `tileA4` (Advanced Feature)
+
+Creates complete A4 sheets with repeated logos:
+
+* Multiple inputs (`-I file1,file2,...`)
+* One logo per row (up to 7 rows)
+* Circular & rectangular modes
+* User-defined size in cm
+* Mirroring options
+* Native PDF output if the output ends with `.pdf`
+
+Example use-case: preparing mirrored edible-print logos for meringue transfers.
+
+---
+
+## Build Instructions
+
+Clone and build the project:
+
 ```bash
-git clone https://github.com/Abram0303/DAI-2025-2026-Class-C-Practical-work-1-Romain-Durussel-Abram-Zweifel.git
-```
-
-2. Navigate to the project directory :
-``` bash
-cd DAI-2025-2026-Class-C-Practical-work-1-Romain-Durussel-Abram-Zweifel
-```
-
-
-3. Build the project using Maven :
-``` bash
+git clone https://github.com/Abram0303/ImageToolBox.git
+cd ImageToolBox
 ./mvnw clean package
 ```
 
-After this step, the generated JAR file will be located in the target/ directory :
-``` target/ImageProcessor-1.0-SNAPSHOT.jar ```
+After building, Maven produces:
+
+```
+target/ImageToolBox-1.0-SNAPSHOT.jar
+target/ImageToolBox-1.0-SNAPSHOT-shaded.jar   ← includes all dependencies (RECOMMENDED)
+```
 
 ---
 
-### Usage Instructions
+## Usage Instructions
 
-You can run the CLI tool either from the terminal or from IntelliJ IDEA.
+### From the Terminal
 
-#### From the Terminal
+#### Grayscale conversion
 
-1. Open a terminal and navigate to the project directory.
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar \
+  -i image/input/input1.jpg -o output/grayscale.jpg grayscale
+```
 
+#### Invert colors
 
-2. Run the desired command with the appropriate arguments. Here are some examples (with inputs at your disposal in the image/input/ folder) :
-   - Grayscale conversion:
-   ``` bash
-   java -jar target/ImageProcessor-1.0-SNAPSHOT.jar -i image/input/input1.jpg -o image/output/output1_grayscale.jpg grayscale
-   ```
-   - Color inversion:
-   ``` bash
-   java -jar target/ImageProcessor-1.0-SNAPSHOT.jar -i image/input/input1.jpg -o image/output/output1_invert.jpg invert
-   ```
-   - Image rotation:
-   ``` bash
-   java -jar target/ImageProcessor-1.0-SNAPSHOT.jar -i image/input/input1.jpg -o image/output/output1_rotate.jpg rotate -a 90
-   ```
-   - Help command:
-   ``` bash
-   java -jar target/ImageProcessor-1.0-SNAPSHOT.jar -h help
-   ```
-   - Version command:
-   ``` bash
-   java -jar target/ImageProcessor-1.0-SNAPSHOT.jar -V version
-   ```
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar \
+  -i image/input/input1.jpg -o output/invert.jpg invert
+```
 
-#### From IntelliJ IDEA
-1. Open the project in IntelliJ.
+#### Rotate 90°
 
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar \
+  -i image/input/input1.jpg -o output/rotate.jpg rotate -a 90
+```
 
-3. Use the *Run ImageProcessor* configuration to launch the CLI. 
+#### Help
 
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar -h
+```
 
-4. Use the *Package JAR* configuration to build the executable JAR. 
-   - Once the build is complete, you can run the CLI directly:
-           ```java -jar target/ImageProcessor-1.0-SNAPSHOT.jar -h```
+#### Version
+
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar -V
+```
 
 ---
 
-### Example Results
+## From IntelliJ IDEA
 
-The following examples show the transformations applied to sample images available in the `image/input/` folder.
+1. Open the project
+2. Select **Run ImageProcessor** or create a run configuration
+3. Use **Package JAR** to generate the executable artifact
+4. Run the CLI via:
 
-| Command | Input                             | Output                                         |
-|----------|-----------------------------------|------------------------------------------------|
-| `grayscale` | ![input1](image/input/input1.jpg) | ![output1](image/output/output1_grayscale.jpg) |
-| `invert` | ![input2](image/input/input2.png) | ![output2](image/output/output2_invert.png)    |
-| `rotate -a 90` | ![input3](image/input/input3.png) | ![output3](image/output/output3_rotate.png)    |
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar -h
+```
 
 ---
 
-### Use of AI Tools and External Sources
+## A4 Logo Tiling Feature
 
-We used ChatGPT as an inspiration and support tool during the development of this project.
-ChatGPT suggested the use of the Java classes ```BufferedImage``` and ```Raster``` for direct pixel-level image manipulation.
+### Example: Generate a PDF A4 page containing 35 rectangular mirrored logos
 
-We decided to follow this approach because these classes are part of the Java standard image processing API and are specifically designed to handle pixel data.
+```bash
+java -jar target/ImageToolBox-1.0-SNAPSHOT-shaded.jar \
+  -i image/input/logo1.jpg \
+  -o planche_35logos.pdf \
+  tileA4 \
+  --shape rect \
+  --rect-width-cm 3.4 \
+  --rect-height-cm 2.7 \
+  --gap-mm 8 \
+  --margin-mm 2 \
+  --mirror-horizontal \
+  -I image/input/logo1.jpg,image/input/logo1.jpg,image/input/logo1.jpg,image/input/logo1.jpg,image/input/logo1.jpg,image/input/logo1.jpg,image/input/logo1.jpg
+```
 
-- ```BufferedImage``` provides a convenient object representation of an image in memory, allowing access to its pixels and color model.
+This produces:
 
-- ```Raster``` and ```WritableRaster``` allow direct reading and modification of pixel values (R, G, B), which is ideal for operations such as grayscale conversion or color inversion.
+* A **native A4** PDF (210 × 297 mm)
+* Automatic grid (≈5 columns × 7 rows)
+* 35 proportional, non-distorted logos
+* Perfect alignment for high-quality printing
 
-By contrast, classes like ```BufferedInputStream``` and ```BufferedOutputStream``` only handle raw binary streams (sequences of bytes).
-They are useful for reading or writing files efficiently, but they do not interpret or manipulate image pixels.
-Using them would require manually parsing the image format (e.g., BMP, PNG, JPG).
+---
 
+## Use of AI Tools
+
+ChatGPT was used as a support tool to:
+
+* Explore and validate Java imaging techniques
+* Suggest improvements for `tileA4`
+* Help implement native A4 PDF generation (PDFBox)
+* Assist in documentation and structure
+
+All final code was manually integrated and adapted by the authors.
