@@ -1,0 +1,1 @@
+java -jar target/ImageProcessor-1.0-SNAPSHOT.jar   -i image/input/logo1.jpg   -o planche_rect_mirror.pdf   tileA4   --shape rect   --rect-width-cm 4.0   --rect-height-cm 3.2   --mirror-horizontal   -I image/input/logo1.jpg,image/input/logo2.jpg,image/input/logo3.jpg,image/input/logo4.jpg,image/input/logo5.jpg,image/input/logo6.jpg
