@@ -10,6 +10,7 @@ import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.Ellipse2D;
 import java.awt.image.BufferedImage;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.concurrent.Callable;
 
 import javax.imageio.ImageIO;
 
+// PDFBox
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
@@ -24,14 +26,13 @@ import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
 import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 
-
 @CommandLine.Command(
         name = "tileA4",
         description = "Tile logos across an A4 page for printing. Supports multiple logos, one per row."
 )
 public class TileA4 implements Callable<Integer> {
 
-    // ---- Paramètres généraux avec VALEURS PAR DÉFAUT ----
+    // ---- Paramètres généraux ----
 
     @CommandLine.Option(
             names = {"--shape"},
@@ -104,7 +105,7 @@ public class TileA4 implements Callable<Integer> {
     )
     public boolean noMask = false;
 
-    // ---- Options de miroir (facultatives) ----
+    // ---- Options de miroir ----
 
     @CommandLine.Option(
             names = {"--mirror-horizontal"},
@@ -118,7 +119,8 @@ public class TileA4 implements Callable<Integer> {
     )
     public boolean mirrorVertical;
 
-    // ---- NEW: plusieurs fichiers d'entrée (un logo par ligne) ----
+    // ---- Multi-inputs : un logo par ligne ----
+
     @CommandLine.Option(
             names = {"-I", "--inputs"},
             description = "List of input logo files (one per row, up to 7).",
@@ -132,6 +134,8 @@ public class TileA4 implements Callable<Integer> {
     // A4 in mm
     private static final double A4_W_MM = 210.0;
     private static final double A4_H_MM = 297.0;
+
+    // ---- Utils conversions ----
 
     private static int mmToPx(double mm, int dpi) {
         return (int) Math.round(mm / 25.4 * dpi);
@@ -161,7 +165,7 @@ public class TileA4 implements Callable<Integer> {
 
     private static BufferedImage mirrorImage(BufferedImage src, boolean horizontal, boolean vertical) {
         if (!horizontal && !vertical) {
-            return src; // rien à faire
+            return src;
         }
 
         int w = src.getWidth();
@@ -186,7 +190,7 @@ public class TileA4 implements Callable<Integer> {
         return out;
     }
 
-    // NEW: préparation d'une source (crop + miroir) identique à ce que tu faisais avant
+    // Préparation d'une source : crop + miroir
     private BufferedImage prepareSource(BufferedImage src0) {
         BufferedImage src = src0;
 
@@ -206,17 +210,44 @@ public class TileA4 implements Callable<Integer> {
         return src;
     }
 
+    // Écriture PDF A4 natif à partir de l'image de page
+    private void writePdfA4(BufferedImage pageImage, File outputFile) throws Exception {
+        try (PDDocument doc = new PDDocument()) {
+            PDPage pdfPage = new PDPage(PDRectangle.A4);
+            doc.addPage(pdfPage);
+
+            PDImageXObject pdImage = LosslessFactory.createFromImage(doc, pageImage);
+
+            try (PDPageContentStream cs = new PDPageContentStream(doc, pdfPage)) {
+                float pageW = pdfPage.getMediaBox().getWidth();
+                float pageH = pdfPage.getMediaBox().getHeight();
+
+                float imgW = pdImage.getWidth();
+                float imgH = pdImage.getHeight();
+
+                float scale = Math.min(pageW / imgW, pageH / imgH);
+                float drawW = imgW * scale;
+                float drawH = imgH * scale;
+
+                float x = (pageW - drawW) / 2f;
+                float y = (pageH - drawH) / 2f;
+
+                cs.drawImage(pdImage, x, y, drawW, drawH);
+            }
+
+            doc.save(outputFile);
+        }
+    }
+
     @Override
     public Integer call() {
         try {
             Images.io = parent.io;
 
-            // --- 1) Chargement des sources ---
-
+            // --- 1) Charger les sources (multi-input, sinon -i classique) ---
             List<BufferedImage> sources = new ArrayList<>();
 
             if (!inputFiles.isEmpty()) {
-                // On utilise la liste --inputs
                 for (File f : inputFiles) {
                     BufferedImage img = ImageIO.read(f);
                     if (img == null) {
@@ -225,7 +256,6 @@ public class TileA4 implements Callable<Integer> {
                     sources.add(prepareSource(img));
                 }
             } else {
-                // Fallback : comportement ancien, une seule image via -i/--input
                 BufferedImage src0 = Images.readImage();
                 if (src0 == null) {
                     throw new IllegalStateException("Input image is null (check -i/--input or --inputs).");
@@ -237,7 +267,7 @@ public class TileA4 implements Callable<Integer> {
                 throw new IllegalStateException("No input images provided.");
             }
 
-            // On limite à 7 lignes (7 logos)
+            // max 7 lignes (1 logo par ligne)
             if (sources.size() > 7) {
                 System.out.println("Warning: more than 7 input images, only the first 7 will be used.");
                 sources = sources.subList(0, 7);
@@ -245,7 +275,7 @@ public class TileA4 implements Callable<Integer> {
 
             int nbLogos = sources.size();
 
-            // --- 2) création de la page A4 ---
+            // --- 2) Créer la page A4 en pixels ---
             int pageW = mmToPx(A4_W_MM, dpi);
             int pageH = mmToPx(A4_H_MM, dpi);
 
@@ -268,11 +298,9 @@ public class TileA4 implements Callable<Integer> {
                 int tileH;
 
                 if (rect) {
-                    // mode RECTANGLE : on utilise rectWidthCm / rectHeightCm
                     tileW = cmToPx(rectWidthCm, dpi);
                     tileH = cmToPx(rectHeightCm, dpi);
                 } else {
-                    // mode CERCLE : diamètre
                     tileW = tileH = cmToPx(diameterCm, dpi);
                 }
 
@@ -282,16 +310,9 @@ public class TileA4 implements Callable<Integer> {
                 int stepX = tileW + gapPx;
                 int stepY = tileH + gapPx;
 
-                // --- 3) Grille : plusieurs colonnes, 7 lignes max ---
                 int cols = Math.max(1, (usableW + gapPx) / stepX);
-                int rows = Math.min(7, nbLogos); // une ligne par logo, max 7
-
-                // Si jamais 7 lignes ne tiennent pas, on réduit (sécurité)
                 int maxRowsThatFit = Math.max(1, (usableH + gapPx) / stepY);
-                if (rows > maxRowsThatFit) {
-                    System.out.printf("Warning: only %d rows fit vertically (requested %d).%n", maxRowsThatFit, rows);
-                    rows = maxRowsThatFit;
-                }
+                int rows = Math.min(nbLogos, maxRowsThatFit);
 
                 int totalW = cols * tileW + (cols - 1) * gapPx;
                 int totalH = rows * tileH + (rows - 1) * gapPx;
@@ -301,7 +322,7 @@ public class TileA4 implements Callable<Integer> {
 
                 Shape oldClip = g.getClip();
 
-                // --- 4) dessin : une ligne = un logo différent ---
+                // --- 3) Dessin : une ligne = un logo différent ---
                 for (int row = 0; row < rows; row++) {
                     BufferedImage src = sources.get(row); // logo de cette ligne
 
@@ -341,7 +362,7 @@ public class TileA4 implements Callable<Integer> {
                     }
                 }
 
-                // repères légers (facultatif)
+                // Repères légers (facultatif)
                 g.setColor(new Color(0, 0, 0, 40));
                 int markerLen = mmToPx(1, dpi);
 
@@ -356,21 +377,20 @@ public class TileA4 implements Callable<Integer> {
                     g.drawLine(pageW - marginPx, cy, pageW - marginPx + markerLen, cy);
                 }
 
-                System.out.printf("Grid: %d cols x %d rows = %d tiles (with %d distinct logos)%n",
-                        cols, rows, cols * rows, rows);
+                System.out.printf("Grid: %d cols x %d rows = %d tiles (%d distinct logos)%n",
+                        cols, rows, cols * rows, nbLogos);
             } finally {
                 g.dispose();
             }
 
+            // --- 4) Sortie : PDF A4 natif ou image ---
             File output = parent.io.outputFile;
             String outName = output.getName().toLowerCase();
 
             if (outName.endsWith(".pdf")) {
-                // Nouveau comportement : vrai PDF A4
                 writePdfA4(page, output);
                 System.out.println("A4 PDF generated. Print at 100% scale.");
             } else {
-                // Ancien comportement : image PNG/JPG, etc.
                 Images.writeImage(page);
                 System.out.println("Image generated. Print at 100% scale.");
             }
@@ -383,36 +403,4 @@ public class TileA4 implements Callable<Integer> {
             return 1;
         }
     }
-
-    private void writePdfA4(BufferedImage pageImage, File outputFile) throws Exception {
-        try (PDDocument doc = new PDDocument()) {
-            // Page A4
-            PDPage pdfPage = new PDPage(PDRectangle.A4);
-            doc.addPage(pdfPage);
-
-            // Convertit notre BufferedImage en image PDFBox
-            PDImageXObject pdImage = LosslessFactory.createFromImage(doc, pageImage);
-
-            try (PDPageContentStream cs = new PDPageContentStream(doc, pdfPage)) {
-                float pageW = pdfPage.getMediaBox().getWidth();
-                float pageH = pdfPage.getMediaBox().getHeight();
-
-                float imgW = pdImage.getWidth();
-                float imgH = pdImage.getHeight();
-
-                // On adapte l’image pour qu’elle tienne dans la page
-                float scale = Math.min(pageW / imgW, pageH / imgH);
-                float drawW = imgW * scale;
-                float drawH = imgH * scale;
-
-                float x = (pageW - drawW) / 2f;
-                float y = (pageH - drawH) / 2f;
-
-                cs.drawImage(pdImage, x, y, drawW, drawH);
-            }
-
-            doc.save(outputFile);
-        }
-    }
-
 }
