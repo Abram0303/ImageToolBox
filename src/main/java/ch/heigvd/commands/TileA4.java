@@ -83,6 +83,13 @@ public class TileA4 implements Callable<Integer> {
     )
     public int dpi = 300;
 
+    @CommandLine.Option(
+            names = {"--boost-colors"},
+            description = "Facteur de saturation pour rendre les logos plus vifs (1.0 = inchangé, 1.5 conseillé pour pastels).",
+            defaultValue = "1.0"
+    )
+    public double boostColors = 1.0;
+
     // ---- Options de forme / source ----
 
     /**
@@ -163,6 +170,50 @@ public class TileA4 implements Callable<Integer> {
         return src.getSubimage(x, y, side, side);
     }
 
+    /**
+     * Boost la saturation des couleurs pour rendre l'image plus "flashy".
+     * Utilisé pour que les logos pastel ressortent mieux à l'impression/transfert.
+     *
+     * @param src           image source
+     * @param saturationFac facteur de saturation (>1.0 pour booster, 1.5-2.0 pour pastels)
+     * @return nouvelle image avec couleurs boostées
+     */
+    private static BufferedImage boostColors(BufferedImage src, double saturationFac) {
+        if (saturationFac <= 1.0) {
+            return src; // pas de boost demandé
+        }
+
+        int w = src.getWidth();
+        int h = src.getHeight();
+
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = src.getRGB(x, y);
+
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >> 8) & 0xFF;
+                int b = (rgb) & 0xFF;
+
+                float[] hsb = Color.RGBtoHSB(r, g, b, null);
+
+                // Si la couleur est vraiment très pastel (faible saturation), on booste un peu plus.
+                double factor = saturationFac;
+                if (hsb[1] < 0.3f) {
+                    factor *= 1.2; // petit bonus pour les tons très pastel
+                }
+
+                hsb[1] = (float) Math.min(1.0, hsb[1] * factor);
+
+                int newRgb = Color.HSBtoRGB(hsb[0], hsb[1], hsb[2]);
+                out.setRGB(x, y, newRgb);
+            }
+        }
+
+        return out;
+    }
+
     private static BufferedImage mirrorImage(BufferedImage src, boolean horizontal, boolean vertical) {
         if (!horizontal && !vertical) {
             return src;
@@ -171,26 +222,27 @@ public class TileA4 implements Callable<Integer> {
         int w = src.getWidth();
         int h = src.getHeight();
 
-        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
-        java.awt.image.Raster rin = src.getRaster();
-        java.awt.image.WritableRaster rout = out.getRaster();
+        // On conserve le type d'image d'origine (pour garder la transparence si c'est du PNG)
+        // Si le type est inconnu (0), on utilise ARGB par sécurité
+        int type = (src.getType() == 0) ? BufferedImage.TYPE_INT_ARGB : src.getType();
 
-        int[] pixel = new int[3]; // RGB
+        BufferedImage out = new BufferedImage(w, h, type);
 
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                rin.getPixel(x, y, pixel);
+                // getRGB récupère la couleur complète (y compris transparence) en un seul nombre
+                int rgb = src.getRGB(x, y);
 
                 int targetX = horizontal ? (w - 1 - x) : x;
                 int targetY = vertical   ? (h - 1 - y) : y;
 
-                rout.setPixel(targetX, targetY, pixel);
+                out.setRGB(targetX, targetY, rgb);
             }
         }
         return out;
     }
 
-    // Préparation d'une source : crop + miroir
+    // Préparation d'une source : crop + miroir + boost couleurs
     private BufferedImage prepareSource(BufferedImage src0) {
         BufferedImage src = src0;
 
@@ -207,8 +259,15 @@ public class TileA4 implements Callable<Integer> {
         }
 
         src = mirrorImage(src, mirrorHorizontal, mirrorVertical);
+
+        // Nouveau : boost de couleurs si demandé
+        if (boostColors > 1.0) {
+            src = boostColors(src, boostColors);
+        }
+
         return src;
     }
+
 
     // Écriture PDF A4 natif à partir de l'image de page
     private void writePdfA4(BufferedImage pageImage, File outputFile) throws Exception {
