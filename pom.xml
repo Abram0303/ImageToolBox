@@ -9,51 +9,137 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!-- Version JavaFX "safe" et dispo sur Maven Central -->
+        <javafx.version>21.0.2</javafx.version>
+
+        <!-- Définie via profils OS ci-dessous -->
+        <javafx.platform>linux</javafx.platform>
     </properties>
-    
+
     <dependencies>
-        <!-- https://mvnrepository.com/artifact/info.picocli/picocli -->
         <dependency>
             <groupId>info.picocli</groupId>
             <artifactId>picocli</artifactId>
             <version>4.7.7</version>
         </dependency>
+
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
             <version>2.0.30</version>
         </dependency>
+
+        <!-- JavaFX (on force le classifier pour avoir les "vrais" jars + natives) -->
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-base</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>${javafx.platform}</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>${javafx.platform}</classifier>
+        </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-controls</artifactId>
+            <version>${javafx.version}</version>
+            <classifier>${javafx.platform}</classifier>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
-            <!-- https://mvnrepository.com/artifact/org.apache.maven.plugins/maven-shade-plugin -->
+            <!-- 2 jars: un CLI et un GUI -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
                 <version>3.6.0</version>
+
                 <executions>
+
+                    <!-- JAR CLI -->
                     <execution>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
+                        <id>shade-cli</id>
                         <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
                         <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <finalName>${project.artifactId}-${project.version}-cli</finalName>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>ch.heigvd.ImageToolBox</mainClass>
                                 </transformer>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.DontIncludeResourceTransformer">
-                                    <resource>MANIFEST.MF</resource>
+                            </transformers>
+                        </configuration>
+                    </execution>
+
+                    <!-- JAR GUI -->
+                    <execution>
+                        <id>shade-gui</id>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <finalName>${project.artifactId}-${project.version}-gui</finalName>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>ch.heigvd.gui.ImageToolBoxLauncher</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
                     </execution>
+
                 </executions>
             </plugin>
         </plugins>
     </build>
+
+    <!-- Choisit automatiquement le bon JavaFX classifier selon l'OS -->
+    <profiles>
+        <profile>
+            <id>windows</id>
+            <activation><os><family>Windows</family></os></activation>
+            <properties><javafx.platform>win</javafx.platform></properties>
+        </profile>
+
+        <profile>
+            <id>linux</id>
+            <activation><os><family>unix</family></os></activation>
+            <properties><javafx.platform>linux</javafx.platform></properties>
+        </profile>
+
+        <profile>
+            <id>mac</id>
+            <activation><os><family>mac</family></os></activation>
+            <properties><javafx.platform>mac</javafx.platform></properties>
+        </profile>
+    </profiles>
+
 </project>
+
