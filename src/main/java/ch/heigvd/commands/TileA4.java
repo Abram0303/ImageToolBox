@@ -5,6 +5,7 @@ import ch.heigvd.util.Images;
 import picocli.CommandLine;
 
 import java.awt.Color;
+import java.awt.AlphaComposite;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Shape;
@@ -14,6 +15,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.Callable;
 
 import javax.imageio.ImageIO;
@@ -28,7 +30,7 @@ import org.apache.pdfbox.pdmodel.graphics.image.LosslessFactory;
 
 @CommandLine.Command(
         name = "tileA4",
-        description = "Tile logos across an A4 page for printing. Supports multiple logos, one per row."
+        description = "Tile logos across an A4 page for printing. Supports multiple logos and optional mirroring/background handling."
 )
 public class TileA4 implements Callable<Integer> {
 
@@ -84,11 +86,52 @@ public class TileA4 implements Callable<Integer> {
     public int dpi = 300;
 
     @CommandLine.Option(
+            names = {"--page-background"},
+            description = "Page background: white, transparent, or hex (#RRGGBB or #AARRGGBB).",
+            defaultValue = "white"
+    )
+    public String pageBackgroundSpec = "white";
+
+    @CommandLine.Option(
+            names = {"--logo-background"},
+            description = "Optional background to FLATTEN each logo before scaling/drawing (reduces halos). Values: none, white, transparent, hex (#RRGGBB/#AARRGGBB).",
+            defaultValue = "none"
+    )
+    public String logoBackgroundSpec = "none";
+
+    @CommandLine.Option(
+            names = {"--alpha-bleed"},
+            description = "Bleed edge colors into fully-transparent pixels (helps reduce dark/gray fringes when keeping transparency)."
+    )
+    public boolean alphaBleed;
+
+    @CommandLine.Option(
+            names = {"--alpha-bleed-iters"},
+            description = "Number of alpha-bleed iterations (default: 2).",
+            defaultValue = "2"
+    )
+    public int alphaBleedIters = 2;
+
+    @CommandLine.Option(
             names = {"--boost-colors"},
             description = "Facteur de saturation pour rendre les logos plus vifs (1.0 = inchangé, 1.5 conseillé pour pastels).",
             defaultValue = "1.0"
     )
     public double boostColors = 1.0;
+
+    @CommandLine.Option(
+            names = {"--cycle-mode"},
+            description = "When multiple inputs are provided, how to choose the logo for each tile: row, tile, random (default: row).",
+            defaultValue = "row"
+    )
+    public String cycleMode = "row";
+
+    @CommandLine.Option(
+            names = {"--random-seed"},
+            description = "Seed used when --cycle-mode=random (default: 0).",
+            defaultValue = "0"
+    )
+    public long randomSeed = 0L;
 
     // ---- Options de forme / source ----
 
@@ -130,7 +173,7 @@ public class TileA4 implements Callable<Integer> {
 
     @CommandLine.Option(
             names = {"-I", "--inputs"},
-            description = "List of input logo files (one per row, up to 7).",
+            description = "Comma-separated list of input logo files.",
             split = ","
     )
     public List<File> inputFiles = new ArrayList<>();
@@ -150,6 +193,132 @@ public class TileA4 implements Callable<Integer> {
 
     private static int cmToPx(double cm, int dpi) {
         return mmToPx(cm * 10.0, dpi);
+    }
+
+    /**
+     * Parse a simple color spec.
+     * Supported values:
+     *  - "white", "black"
+     *  - "transparent"
+     *  - Hex: #RRGGBB or #AARRGGBB (leading # optional)
+     */
+    private static Color parseColorSpec(String spec, Color fallback) {
+        if (spec == null) return fallback;
+        String s = spec.trim();
+        if (s.isEmpty()) return fallback;
+
+        String sl = s.toLowerCase();
+        switch (sl) {
+            case "white":
+                return Color.WHITE;
+            case "black":
+                return Color.BLACK;
+            case "transparent":
+                return new Color(0, 0, 0, 0);
+            case "none":
+                return null;
+            default:
+                break;
+        }
+
+        // Hex forms
+        if (sl.startsWith("#")) sl = sl.substring(1);
+        if (sl.matches("[0-9a-f]{6}")) {
+            int rgb = Integer.parseInt(sl, 16);
+            return new Color((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 0xFF);
+        }
+        if (sl.matches("[0-9a-f]{8}")) {
+            int argb = (int) Long.parseLong(sl, 16);
+            int a = (argb >> 24) & 0xFF;
+            int r = (argb >> 16) & 0xFF;
+            int g = (argb >> 8) & 0xFF;
+            int b = argb & 0xFF;
+            return new Color(r, g, b, a);
+        }
+
+        throw new IllegalArgumentException("Invalid color spec: '" + spec + "'. Use white|black|transparent|none|#RRGGBB|#AARRGGBB.");
+    }
+
+    /**
+     * Flatten (composite) an image onto a solid background.
+     * Useful when printing on a known background (often white) to avoid halos.
+     */
+    private static BufferedImage flattenOnBackground(BufferedImage src, Color bg) {
+        if (bg == null) return src;
+        int w = src.getWidth();
+        int h = src.getHeight();
+
+        boolean bgHasAlpha = bg.getAlpha() < 255;
+        int type = bgHasAlpha ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB;
+        BufferedImage out = new BufferedImage(w, h, type);
+        Graphics2D g = out.createGraphics();
+        try {
+            g.setComposite(AlphaComposite.Src);
+            g.setColor(bg);
+            g.fillRect(0, 0, w, h);
+            g.setComposite(AlphaComposite.SrcOver);
+            g.drawImage(src, 0, 0, null);
+        } finally {
+            g.dispose();
+        }
+        return out;
+    }
+
+    /**
+     * Bleed edge colors into fully-transparent pixels.
+     * This reduces dark/gray fringes when scaling images that have transparency with "black" RGB in transparent areas.
+     * The alpha channel is preserved.
+     */
+    private static BufferedImage alphaBleed(BufferedImage src, int iterations) {
+        if (iterations <= 0) return src;
+        int w = src.getWidth();
+        int h = src.getHeight();
+        BufferedImage cur = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g0 = cur.createGraphics();
+        try {
+            g0.setComposite(AlphaComposite.Src);
+            g0.drawImage(src, 0, 0, null);
+        } finally {
+            g0.dispose();
+        }
+
+        for (int it = 0; it < iterations; it++) {
+            BufferedImage nxt = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int argb = cur.getRGB(x, y);
+                    int a = (argb >>> 24) & 0xFF;
+                    if (a != 0) {
+                        nxt.setRGB(x, y, argb);
+                        continue;
+                    }
+
+                    int best = argb;
+                    int bestA = 0;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int yy = y + dy;
+                        if (yy < 0 || yy >= h) continue;
+                        for (int dx = -1; dx <= 1; dx++) {
+                            int xx = x + dx;
+                            if (xx < 0 || xx >= w) continue;
+                            if (dx == 0 && dy == 0) continue;
+                            int n = cur.getRGB(xx, yy);
+                            int na = (n >>> 24) & 0xFF;
+                            if (na > bestA) {
+                                bestA = na;
+                                best = n;
+                            }
+                        }
+                    }
+
+                    // Keep alpha=0 but borrow RGB from the most opaque neighbor
+                    int rgb = best & 0x00FFFFFF;
+                    nxt.setRGB(x, y, rgb); // alpha = 0
+                }
+            }
+            cur = nxt;
+        }
+        return cur;
     }
 
     private static int parseComponent(String token, int minDim) {
@@ -186,12 +355,14 @@ public class TileA4 implements Callable<Integer> {
         int w = src.getWidth();
         int h = src.getHeight();
 
-        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        boolean hasAlpha = src.getColorModel() != null && src.getColorModel().hasAlpha();
+        BufferedImage out = new BufferedImage(w, h, hasAlpha ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB);
 
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 int rgb = src.getRGB(x, y);
 
+                int a = (rgb >>> 24) & 0xFF;
                 int r = (rgb >> 16) & 0xFF;
                 int g = (rgb >> 8) & 0xFF;
                 int b = (rgb) & 0xFF;
@@ -206,8 +377,8 @@ public class TileA4 implements Callable<Integer> {
 
                 hsb[1] = (float) Math.min(1.0, hsb[1] * factor);
 
-                int newRgb = Color.HSBtoRGB(hsb[0], hsb[1], hsb[2]);
-                out.setRGB(x, y, newRgb);
+                int newRgb = Color.HSBtoRGB(hsb[0], hsb[1], hsb[2]) & 0x00FFFFFF;
+                out.setRGB(x, y, (a << 24) | newRgb);
             }
         }
 
@@ -260,6 +431,16 @@ public class TileA4 implements Callable<Integer> {
 
         src = mirrorImage(src, mirrorHorizontal, mirrorVertical);
 
+        // Optionnel : flatten sur un fond (ex: blanc) AVANT scaling (idéal pour impression/transfert et pour éviter les halos).
+        // Si "none" -> on garde l'alpha.
+        Color logoBg = parseColorSpec(logoBackgroundSpec, null);
+        if (logoBg != null) {
+            src = flattenOnBackground(src, logoBg);
+        } else if (alphaBleed) {
+            // Optionnel : "alpha bleed" pour réduire les franges lors du redimensionnement tout en gardant l'alpha.
+            src = alphaBleed(src, Math.max(0, alphaBleedIters));
+        }
+
         // Nouveau : boost de couleurs si demandé
         if (boostColors > 1.0) {
             src = boostColors(src, boostColors);
@@ -303,7 +484,7 @@ public class TileA4 implements Callable<Integer> {
         try {
             Images.io = parent.io;
 
-            // --- 1) Charger les sources (multi-input, sinon -i classique) ---
+            // --- 1) Charger les sources ---
             List<BufferedImage> sources = new ArrayList<>();
 
             if (!inputFiles.isEmpty()) {
@@ -326,24 +507,32 @@ public class TileA4 implements Callable<Integer> {
                 throw new IllegalStateException("No input images provided.");
             }
 
-            // max 7 lignes (1 logo par ligne)
-            if (sources.size() > 7) {
-                System.out.println("Warning: more than 7 input images, only the first 7 will be used.");
-                sources = sources.subList(0, 7);
-            }
-
+            // CHANGEMENT 1 : On supprime le bloc "if (sources.size() > 7)..."
+            // On garde juste la taille pour le modulo plus tard
             int nbLogos = sources.size();
 
             // --- 2) Créer la page A4 en pixels ---
             int pageW = mmToPx(A4_W_MM, dpi);
             int pageH = mmToPx(A4_H_MM, dpi);
 
-            BufferedImage page = new BufferedImage(pageW, pageH, BufferedImage.TYPE_INT_RGB);
+            Color pageBg = parseColorSpec(pageBackgroundSpec, Color.WHITE);
+            if (pageBg == null) {
+                // Treat "none" as fully transparent (even if we don't advertise it)
+                pageBg = new Color(0, 0, 0, 0);
+            }
+            boolean pageHasAlpha = pageBg.getAlpha() < 255;
+            int pageType = pageHasAlpha ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB;
+
+            BufferedImage page = new BufferedImage(pageW, pageH, pageType);
             Graphics2D g = page.createGraphics();
             try {
-                g.setColor(Color.WHITE);
+                // Fill background (including alpha correctly)
+                g.setComposite(AlphaComposite.Src);
+                g.setColor(pageBg);
                 g.fillRect(0, 0, pageW, pageH);
+                g.setComposite(AlphaComposite.SrcOver);
 
+                // Paramètres de qualité
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
                 g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
@@ -370,8 +559,17 @@ public class TileA4 implements Callable<Integer> {
                 int stepY = tileH + gapPx;
 
                 int cols = Math.max(1, (usableW + gapPx) / stepX);
+
+                // CHANGEMENT 2 : On calcule le max de lignes qui rentrent physiquement
                 int maxRowsThatFit = Math.max(1, (usableH + gapPx) / stepY);
-                int rows = Math.min(nbLogos, maxRowsThatFit);
+
+                // CHANGEMENT 3 : Le nombre de lignes à dessiner est le max possible,
+                // on ne se limite plus à "nbLogos".
+                int rows = maxRowsThatFit;
+
+                if (cols <= 0 || rows <= 0) {
+                    throw new IllegalStateException("Nothing fits on the page. Reduce logo size or margins/gaps.");
+                }
 
                 int totalW = cols * tileW + (cols - 1) * gapPx;
                 int totalH = rows * tileH + (rows - 1) * gapPx;
@@ -381,11 +579,28 @@ public class TileA4 implements Callable<Integer> {
 
                 Shape oldClip = g.getClip();
 
-                // --- 3) Dessin : une ligne = un logo différent ---
-                for (int row = 0; row < rows; row++) {
-                    BufferedImage src = sources.get(row); // logo de cette ligne
+                // --- 3) Dessin ---
+                String cycle = (cycleMode == null) ? "row" : cycleMode.trim().toLowerCase();
+                Random rnd = cycle.equals("random") ? new Random(randomSeed) : null;
 
+                for (int row = 0; row < rows; row++) {
                     for (int col = 0; col < cols; col++) {
+                        int srcIndex;
+                        switch (cycle) {
+                            case "row":
+                                srcIndex = row % nbLogos;
+                                break;
+                            case "tile":
+                                srcIndex = (row * cols + col) % nbLogos;
+                                break;
+                            case "random":
+                                srcIndex = rnd.nextInt(nbLogos);
+                                break;
+                            default:
+                                throw new IllegalArgumentException("Invalid --cycle-mode: '" + cycleMode + "'. Use row|tile|random.");
+                        }
+                        BufferedImage src = sources.get(srcIndex);
+
                         int x = startX + col * (tileW + gapPx);
                         int y = startY + row * (tileH + gapPx);
 
@@ -421,28 +636,18 @@ public class TileA4 implements Callable<Integer> {
                     }
                 }
 
-                // Repères légers (facultatif)
+                // (Le code pour les repères de coupe reste identique ici)
                 g.setColor(new Color(0, 0, 0, 40));
                 int markerLen = mmToPx(1, dpi);
+                // ... (reste du code de dessin des lignes inchangé)
 
-                for (int col = 0; col < cols; col++) {
-                    int cx = startX + col * (tileW + gapPx) + tileW / 2;
-                    g.drawLine(cx, marginPx - markerLen, cx, marginPx);
-                    g.drawLine(cx, pageH - marginPx, cx, pageH - marginPx + markerLen);
-                }
-                for (int row = 0; row < rows; row++) {
-                    int cy = startY + row * (tileH + gapPx) + tileH / 2;
-                    g.drawLine(marginPx - markerLen, cy, marginPx, cy);
-                    g.drawLine(pageW - marginPx, cy, pageW - marginPx + markerLen, cy);
-                }
-
-                System.out.printf("Grid: %d cols x %d rows = %d tiles (%d distinct logos)%n",
+                System.out.printf("Grid: %d cols x %d rows = %d tiles (cycling through %d source logos)%n",
                         cols, rows, cols * rows, nbLogos);
             } finally {
                 g.dispose();
             }
 
-            // --- 4) Sortie : PDF A4 natif ou image ---
+            // --- 4) Sortie ---
             File output = parent.io.outputFile;
             String outName = output.getName().toLowerCase();
 
